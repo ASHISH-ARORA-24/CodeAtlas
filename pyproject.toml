@@ -1,0 +1,7 @@
+[project]
+name = "codeatlas"
+version = "0.1.0"
+description = "AI-powered codebase Q&A service — index your repos, ask questions, get answers"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
