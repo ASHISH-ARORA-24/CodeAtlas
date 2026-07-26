@@ -66,3 +66,12 @@ This helps future readers (and future us) understand the reasoning behind the co
 **Rejected:** Have the chunker read the original source files directly using line numbers
 **Why:** The JSON becomes fully self-contained. The chunker only needs the JSON — it never needs to know where the source files are. This also makes the JSON the common contract between crawlers and chunkers — a JavaScript crawler producing the same JSON format would work with the same chunker unchanged.
 **Revisit:** No change planned. This is the right design at all iteration levels.
+
+---
+
+## Decision 8 — Embedding Model: all-MiniLM-L6-v2
+
+**Chose:** `all-MiniLM-L6-v2` (ChromaDB's default ONNX model) — explicitly declared in the chunker
+**Rejected:** `all-mpnet-base-v2` (higher quality but 420MB, slow), `codebert` / `code-search-net` (code-aware but complex setup)
+**Why:** Fast (80MB), runs on CPU, no GPU needed, already cached by ChromaDB. Good enough for Iteration 1 where the goal is understanding the pipeline, not maximising retrieval quality. Explicitly declared in code so it never changes accidentally — the same model must be used at index time and query time or stored vectors become incompatible with queries.
+**Revisit:** Iteration 2 — upgrade to a code-aware model (e.g. `microsoft/codebert-base` or `code-search-net`) for significantly better retrieval on code-specific questions like "find functions that handle authentication".

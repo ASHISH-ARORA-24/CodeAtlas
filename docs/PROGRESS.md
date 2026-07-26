@@ -91,7 +91,23 @@ This document is updated after every logical chunk is completed. It serves as th
   - JSON is fully self-contained — the chunker only needs the JSON, never the original source files
   - Command: `PYTHONPATH=. uv run --package codeatlas python3 crawlers/crawl_project.py <project_path>`
 
-### Chunk 6 — Smart Text Chunking for Embeddings
+### Chunk 6 — python_chunker.py with ChromaDB vector storage
+- **Status:** ✅ Done
+- **What we did:** Built `chunkers/python_chunker.py` which reads the JSON files produced by `crawl_project.py` and stores rich text chunks in ChromaDB as vector embeddings. Supports incremental updates — files with unchanged timestamps are skipped, stale chunks for deleted functions are removed automatically. Explicitly declared the embedding model (`all-MiniLM-L6-v2`) so it never changes accidentally. Documented the model choice in `DECISIONS.md`.
+- **Key learnings:**
+  - ChromaDB does three things in one call: takes text, converts to vector, saves both — we never call the embedding model manually
+  - `collection.upsert()` adds a new chunk or updates an existing one if the ID already exists — no duplicates
+  - Chunk ID format: `repo::file::name` (e.g. `grade_calculator::utils.py::calculate_average`) — unique and stable across runs
+  - For class methods the ID includes the class: `grade_calculator::utils.py::StudentProfile::get_summary`
+  - A class produces N+1 chunks — one for the class itself, one per method
+  - Stale chunk detection: get existing IDs from ChromaDB for the file, compare with new IDs, delete the difference
+  - The embedding model must be explicitly declared and must be the same at index time and query time — implicit defaults are dangerous
+  - `all-MiniLM-L6-v2` is a general-purpose model — good for Iteration 1, upgrade to a code-aware model in Iteration 2
+  - ChromaDB collection = one per repo — like a table in a relational database
+  - `chroma_db/` folder is added to `.gitignore` — database files are never committed
+  - Command: `PYTHONPATH=. uv run python3 chunkers/python_chunker.py <project_path>`
+
+### Chunk 7 — Build Knowledge Graph in Neo4j
 - **Status:** 🔲 Pending
 
 ### Chunk 6 — Generate Embeddings and Store in ChromaDB
