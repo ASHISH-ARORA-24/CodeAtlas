@@ -124,16 +124,18 @@ This document is updated after every logical chunk is completed. It serves as th
   - Command: `PYTHONPATH=. uv run python3 neo4j_loader/load_project.py <project_path>`
 
 ### Chunk 8 — Question Answering with Gemini Flash
-- **Status:** 🔲 Pending
-
-### Chunk 7 — Build Knowledge Graph in Neo4j
-- **Status:** 🔲 Pending
-
-### Chunk 8 — Question Answering with Gemini Flash
-- **Status:** 🔲 Pending
-
-### Chunk 7 — Wire Everything Together (End-to-End Script)
-- **Status:** 🔲 Pending
+- **Status:** ✅ Done
+- **What we did:** Built `qa/ask.py` which wires ChromaDB, Neo4j, and Gemini Flash together into a complete Q&A pipeline. User asks a question in plain English — ChromaDB finds the most relevant code chunks, Neo4j enriches each chunk with structural context (what it calls, what calls it, which class it belongs to), a prompt is built combining all context, and Gemini Flash generates a grounded answer. Tested with multiple questions, all answered correctly.
+- **Key learnings:**
+  - RAG = Retrieval Augmented Generation: find relevant context first (ChromaDB), then generate an answer using that context (Gemini)
+  - The richer the chunk text (docstrings + code + metadata), the better ChromaDB retrieval — semantic similarity works on meaning, not keywords
+  - Neo4j adds structural context that ChromaDB cannot provide — "what calls this function?" requires graph traversal, not vector similarity
+  - The prompt explicitly tells Gemini to answer using ONLY the provided context — prevents hallucination
+  - Gemini API key format: `AQ.` prefix is a valid token format that works with `X-goog-api-key` header
+  - Use `gemini-flash-latest` model alias — always points to the latest available Flash model
+  - `google-genai` SDK: `client.models.generate_content(model=..., contents=...)` is the generation call
+  - The Q&A script is separate from the indexing pipeline — indexing runs once when a repo is added, Q&A runs on every user question
+  - Command: `PYTHONPATH=. uv run python3 qa/ask.py <repo> "<question>"`
 
 ---
 
