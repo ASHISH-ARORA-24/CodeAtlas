@@ -108,9 +108,22 @@ This document is updated after every logical chunk is completed. It serves as th
   - Command: `PYTHONPATH=. uv run python3 chunkers/python_chunker.py <project_path>`
 
 ### Chunk 7 — Build Knowledge Graph in Neo4j
-- **Status:** 🔲 Pending
+- **Status:** ✅ Done
+- **What we did:** Built `neo4j_loader/load_project.py` which reads the JSON files produced by `crawl_project.py` and builds a knowledge graph in Neo4j. Uses a two-pass approach — Pass 1 creates all nodes (File, Function, Class, Method), Pass 2 creates all cross-file relationships (IMPORTS, CALLS). Credentials stored in `.env` using `python-dotenv`. Supports incremental updates with stale node deletion.
+- **Key learnings:**
+  - Neo4j nodes are things (File, Function, Class, Method) — relationships are connections between them (CONTAINS, HAS_METHOD, IMPORTS, CALLS)
+  - Relationships are stored once but queryable in both directions — no need to store both directions
+  - `MERGE` in Cypher creates a node/relationship if it does not exist, or matches it if it does — prevents duplicates on re-runs
+  - `DETACH DELETE` removes a node and all its relationships — used for stale node cleanup
+  - Neo4j driver 6.x requires parameters as a dict `{"key": value}` not keyword arguments
+  - The two-pass bug: CALLS and IMPORTS were failing because target nodes did not exist yet when the relationship was being created — fixed by creating all nodes first, then all relationships
+  - Pass 1 tracks which files were actually loaded (not skipped) so Pass 2 only links those files
+  - Credentials must never be hardcoded — stored in `.env`, loaded with `python-dotenv`, `.env` is gitignored
+  - `.env.example` is committed as a safe template so other developers know what variables are needed
+  - `cypher-shell -u neo4j -p <password>` is the CLI for running Cypher queries
+  - Command: `PYTHONPATH=. uv run python3 neo4j_loader/load_project.py <project_path>`
 
-### Chunk 6 — Generate Embeddings and Store in ChromaDB
+### Chunk 8 — Question Answering with Gemini Flash
 - **Status:** 🔲 Pending
 
 ### Chunk 7 — Build Knowledge Graph in Neo4j
