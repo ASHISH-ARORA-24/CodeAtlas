@@ -51,7 +51,20 @@ This document is updated after every logical chunk is completed. It serves as th
   - Parse the AST tree once and pass it to multiple extractors — avoid parsing the same file twice
   - The crawler command: `uv run crawlers/python_ast.py <file_path>`
 
-### Chunk 3 — Smart Text Chunking for Embeddings
+### Chunk 3 — Complete Crawler with Imports, Calls, and Multi-file Support
+- **Status:** ✅ Done
+- **What we did:** Extended the AST crawler to accept a project folder path instead of a single file. Added `find_python_files` to walk the folder recursively, `extract_imports` to capture file-level dependencies, `extract_function_calls` to capture what each function calls inside its body, and `crawl_file` to return one structured dict per file — the final Neo4j-ready output. Created the `grade_calculator` sample project with functions, a class, imports, calls, and an intentional orphan function (`get_today_date`).
+- **Key learnings:**
+  - `pathlib.Path.rglob("*.py")` recursively finds all Python files in a folder
+  - Two AST import node types: `ast.Import` (plain) and `ast.ImportFrom` (from-imports) — `ImportFrom` is the most valuable for graph edges
+  - `ast.Call` nodes represent function calls inside a function body — `node.func.id` for simple calls, `node.func.attr` for method calls
+  - The crawler now returns a structured dict per file: `{file, path, imports, functions, classes}` — ready to be stored in Neo4j
+  - An orphan function is one that is defined but never called — detectable by comparing defined vs called function sets
+  - Orphan detection is an analysis concern, not a crawler concern — it happens at the Neo4j query stage
+  - The crawler command: `uv run --package codeatlas python3 crawlers/python_ast.py <project_path>`
+  - Neo4j relationships the crawler enables: `File→IMPORTS→File`, `File→CONTAINS→Function`, `Class→HAS_METHOD→Method`, `Function→CALLS→Function`
+
+### Chunk 4 — Smart Text Chunking for Embeddings
 - **Status:** 🔲 Pending
 
 ### Chunk 4 — Generate Embeddings and Store in ChromaDB
