@@ -258,6 +258,94 @@ def extract_classes(tree: ast.Module) -> list[dict]:
     return classes
 
 
+def extract_module_level_variables(tree: ast.Module) -> list[dict]:
+    """
+    Extracts global variable assignments at the top level of a file.
+
+    These are variables defined outside any function or class — for example:
+        DEFAULT_PASS_MARK = 50
+        system_profile = StudentProfile("System", 18)
+
+    Since they belong to no function or class, they are tagged to the file
+    itself in Neo4j: File → HAS_VARIABLE → variable_name
+
+    Only captures simple assignments (ast.Assign) and annotated assignments
+    (ast.AnnAssign). Skips functions, classes, and imports.
+
+    Returns a list of dicts with keys:
+    - name: the variable name
+    - value: the assigned value as a readable string
+    - line_number: where the assignment appears in the file
+    """
+    variables = []
+
+    for node in tree.body:
+        # simple assignment: DEFAULT_PASS_MARK = 50
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    variables.append({
+                        "name": target.id,
+                        "value": ast.unparse(node.value),
+                        "line_number": node.lineno,
+                    })
+
+        # annotated assignment: count: int = 0
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.value:
+                variables.append({
+                    "name": node.target.id,
+                    "value": ast.unparse(node.value),
+                    "line_number": node.lineno,
+                })
+
+    return variables
+
+
+def extract_module_level_calls(tree: ast.Module) -> list[str]:
+    """
+    Extracts all function calls made at the module level — outside any
+    function or class body.
+
+    These calls are tagged to the file itself in Neo4j:
+        File → CALLS → function_name
+
+    Common examples:
+        system_profile = StudentProfile("System", 18)  ← calls StudentProfile
+        parser = argparse.ArgumentParser()              ← calls ArgumentParser
+
+    Skips FunctionDef, ClassDef, and Import nodes since those are handled
+    by their own extractors. Everything else (Assign, Expr, If) is searched
+    for ast.Call nodes.
+    """
+    # node types that have their own extractors — skip them
+    SKIP_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom)
+
+    calls = []
+
+    for node in tree.body:
+        if isinstance(node, SKIP_TYPES):
+            continue
+
+        # walk everything else and find all function calls
+        for child in ast.walk(node):
+            if isinstance(child, ast.Call):
+                if isinstance(child.func, ast.Name):
+                    calls.append(child.func.id)
+                elif isinstance(child.func, ast.Attribute):
+                    calls.append(child.func.attr)
+
+    # remove duplicates while preserving order
+    seen = set()
+    unique_calls = []
+    for call in calls:
+        if call not in seen:
+            seen.add(call)
+            unique_calls.append(call)
+
+    return unique_calls
+
+
 def crawl_file(file_path: str) -> dict:
     """
     Runs all extractors on a single Python file and returns a structured dict.
@@ -279,6 +367,8 @@ def crawl_file(file_path: str) -> dict:
         "file": Path(file_path).name,
         "path": file_path,
         "imports": extract_imports(tree),
+        "module_variables": extract_module_level_variables(tree),
+        "module_calls": extract_module_level_calls(tree),
         "functions": extract_functions(tree),
         "classes": extract_classes(tree),
     }
@@ -293,12 +383,15 @@ def print_crawler_output(result: dict) -> None:
     and debugging — in the real pipeline this data goes to Neo4j and ChromaDB.
     """
     imports = result["imports"]
+    module_variables = result["module_variables"]
+    module_calls = result["module_calls"]
     functions = result["functions"]
     classes = result["classes"]
 
     print(f"\n{'='*60}")
-    print(f"File     : {result['path']}")
-    print(f"Imports  : {len(imports)}  |  Functions: {len(functions)}  |  Classes: {len(classes)}")
+    print(f"File         : {result['path']}")
+    print(f"Imports      : {len(imports)}  |  Module Vars: {len(module_variables)}  |  Module Calls: {len(module_calls)}")
+    print(f"Functions    : {len(functions)}  |  Classes: {len(classes)}")
     print(f"{'='*60}")
 
     if imports:
@@ -308,6 +401,15 @@ def print_crawler_output(result: dict) -> None:
                 print(f"  from {imp['module']} import {', '.join(imp['names'])}  (line {imp['line_number']})")
             else:
                 print(f"  import {imp['module']}  (line {imp['line_number']})")
+
+    if module_variables:
+        print("\n--- Module-Level Variables (tagged to file) ---")
+        for var in module_variables:
+            print(f"  {var['name']} = {var['value']}  (line {var['line_number']})")
+
+    if module_calls:
+        print("\n--- Module-Level Calls (tagged to file) ---")
+        print(f"  {', '.join(module_calls)}")
 
     if functions:
         print("\n--- Top-Level Functions ---")

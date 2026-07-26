@@ -64,16 +64,28 @@ This document is updated after every logical chunk is completed. It serves as th
   - The crawler command: `uv run --package codeatlas python3 crawlers/python_ast.py <project_path>`
   - Neo4j relationships the crawler enables: `File→IMPORTS→File`, `File→CONTAINS→Function`, `Class→HAS_METHOD→Method`, `Function→CALLS→Function`
 
-### Chunk 4 — Smart Text Chunking for Embeddings
+### Chunk 4 — Module-Level Variables and Calls
+- **Status:** ✅ Done
+- **What we did:** Added `extract_module_level_variables` and `extract_module_level_calls` to the crawler. These capture everything at the top level of a file that is outside any function or class — global constants, global objects, and any direct calls. All of these are tagged to the file itself in Neo4j. Also added module-level variables and calls to `main.py` of the grade_calculator sample to test and demonstrate the feature.
+- **Key learnings:**
+  - `ast.Assign` captures simple assignments: `DEFAULT_PASS_MARK = 50`
+  - `ast.AnnAssign` captures annotated assignments: `count: int = 0`
+  - Module-level calls are found by walking all top-level nodes that are not `FunctionDef`, `ClassDef`, or `Import`
+  - Everything at module level is tagged to the file: `File → HAS_VARIABLE → var`, `File → CALLS → function`
+  - Known limitation: `self.attr = ClassName()` inside `__init__` — the crawler captures the call to `ClassName` but cannot link `self.attr` to that type automatically (type inference problem)
+  - Known limitation: function parameters typed as a class (e.g. `profile: StudentProfile`) — the type hint is captured, but the link between calls inside that function and the class is not automatic. It is queryable in Neo4j using the type hint.
+  - Known limitation: Python built-ins (`sum`, `len`, `print`) appear as calls but have no corresponding nodes — filtered at the Neo4j query stage
+
+### Chunk 5 — Smart Text Chunking for Embeddings
 - **Status:** 🔲 Pending
 
-### Chunk 4 — Generate Embeddings and Store in ChromaDB
+### Chunk 6 — Generate Embeddings and Store in ChromaDB
 - **Status:** 🔲 Pending
 
-### Chunk 5 — Build Knowledge Graph in Neo4j
+### Chunk 7 — Build Knowledge Graph in Neo4j
 - **Status:** 🔲 Pending
 
-### Chunk 6 — Question Answering with Gemini Flash
+### Chunk 8 — Question Answering with Gemini Flash
 - **Status:** 🔲 Pending
 
 ### Chunk 7 — Wire Everything Together (End-to-End Script)
