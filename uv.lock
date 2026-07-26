@@ -2,7 +2,18 @@ version = 1
 revision = 3
 requires-python = ">=3.13"
 
+[manifest]
+members = [
+    "codeatlas",
+    "grade-calculator",
+]
+
 [[package]]
 name = "codeatlas"
 version = "0.1.0"
 source = { virtual = "." }
+
+[[package]]
+name = "grade-calculator"
+version = "0.1.0"
+source = { virtual = "source/codeatlas/sample/grade_calculator" }

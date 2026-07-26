@@ -5,3 +5,8 @@ description = "AI-powered codebase Q&A service — index your repos, ask questio
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = []
+
+[tool.uv.workspace]
+members = [
+    "source/codeatlas/sample/grade_calculator",
+]
