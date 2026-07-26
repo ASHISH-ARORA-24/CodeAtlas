@@ -76,7 +76,22 @@ This document is updated after every logical chunk is completed. It serves as th
   - Known limitation: function parameters typed as a class (e.g. `profile: StudentProfile`) — the type hint is captured, but the link between calls inside that function and the class is not automatic. It is queryable in Neo4j using the type hint.
   - Known limitation: Python built-ins (`sum`, `len`, `print`) appear as calls but have no corresponding nodes — filtered at the Neo4j query stage
 
-### Chunk 5 — Smart Text Chunking for Embeddings
+### Chunk 5 — crawl_project.py with JSON output and incremental crawling
+- **Status:** ✅ Done
+- **What we did:** Built `crawlers/crawl_project.py` which orchestrates the full crawling pipeline — finds all Python files, calls `crawl_file()` from `python_ast.py`, mirrors the source folder structure under `output/`, and saves one JSON file per Python file. Added incremental crawling using file timestamps — unchanged files are skipped on subsequent runs. Added `attach_timestamp_to_result` to reflect the file-level timestamp onto every function, class, and method in the JSON. Also updated `python_ast.py` to include actual source code of each function and class using `ast.get_source_segment()` so the JSON is fully self-contained.
+- **Key learnings:**
+  - The pipeline pattern: `python_ast.py` extracts, `crawl_project.py` orchestrates and saves — each has one job
+  - Output folder mirrors source folder exactly: `source/x/y/z.py` → `output/x/y/z.json`
+  - One JSON file per Python file — avoids memory issues on large projects
+  - `_project.json` is the index file — records owner, project, repo, crawl date, and list of output files
+  - Incremental crawling: compare file's `st_mtime` (last modified time) against stored timestamp in JSON — skip if unchanged
+  - Deleting the output folder forces a full re-crawl — the script handles both fresh start and incremental update with the same logic
+  - File timestamp is reflected onto all functions, classes, and methods from that file — OS only tracks timestamps at file level, not per function
+  - `ast.get_source_segment(source_code, node)` extracts the exact source code for any AST node
+  - JSON is fully self-contained — the chunker only needs the JSON, never the original source files
+  - Command: `PYTHONPATH=. uv run --package codeatlas python3 crawlers/crawl_project.py <project_path>`
+
+### Chunk 6 — Smart Text Chunking for Embeddings
 - **Status:** 🔲 Pending
 
 ### Chunk 6 — Generate Embeddings and Store in ChromaDB

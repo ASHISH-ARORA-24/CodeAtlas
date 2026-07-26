@@ -136,12 +136,15 @@ def extract_function_calls(node: ast.FunctionDef) -> list[str]:
     return unique_calls
 
 
-def extract_function_info(node: ast.FunctionDef) -> dict:
+def extract_function_info(node: ast.FunctionDef, source_code: str) -> dict:
     """
     Extracts all meaningful information from a single function or method node.
 
     Returns a dict with name, docstring, parameters, return type, line number,
-    and all function calls made inside the body.
+    calls made inside the body, and the actual source code of the function.
+
+    The source code is included so the JSON is fully self-contained — the
+    chunker never needs to read the original .py file.
 
     Centralising this here avoids duplicating the same logic in both
     extract_functions and extract_methods.
@@ -153,10 +156,13 @@ def extract_function_info(node: ast.FunctionDef) -> dict:
         "return_type": extract_return_type(node),
         "line_number": node.lineno,
         "calls": extract_function_calls(node),
+        # ast.get_source_segment extracts the exact lines of source code
+        # for this node — preserving indentation and formatting
+        "source_code": ast.get_source_segment(source_code, node) or "",
     }
 
 
-def extract_functions(tree: ast.Module) -> list[dict]:
+def extract_functions(tree: ast.Module, source_code: str) -> list[dict]:
     """
     Extracts only the top-level functions from a parsed AST module.
 
@@ -168,7 +174,7 @@ def extract_functions(tree: ast.Module) -> list[dict]:
 
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
-            functions.append(extract_function_info(node))
+            functions.append(extract_function_info(node, source_code))
 
     return functions
 
@@ -215,7 +221,7 @@ def extract_imports(tree: ast.Module) -> list[dict]:
     return imports
 
 
-def extract_methods(class_node: ast.ClassDef) -> list[dict]:
+def extract_methods(class_node: ast.ClassDef, source_code: str) -> list[dict]:
     """
     Extracts all methods from a single class node.
 
@@ -227,12 +233,12 @@ def extract_methods(class_node: ast.ClassDef) -> list[dict]:
 
     for node in class_node.body:
         if isinstance(node, ast.FunctionDef):
-            methods.append(extract_function_info(node))
+            methods.append(extract_function_info(node, source_code))
 
     return methods
 
 
-def extract_classes(tree: ast.Module) -> list[dict]:
+def extract_classes(tree: ast.Module, source_code: str) -> list[dict]:
     """
     Extracts all classes from a parsed AST module, including their methods.
 
@@ -240,6 +246,7 @@ def extract_classes(tree: ast.Module) -> list[dict]:
     - name: class name
     - docstring: the class-level docstring
     - line_number: where the class starts in the file
+    - source_code: the actual source code of the entire class
     - methods: list of method dicts extracted by extract_methods
 
     This is the foundation of the Neo4j graph edge: Class → HAS_METHOD → Method.
@@ -252,7 +259,8 @@ def extract_classes(tree: ast.Module) -> list[dict]:
                 "name": node.name,
                 "docstring": extract_docstring(node),
                 "line_number": node.lineno,
-                "methods": extract_methods(node),
+                "source_code": ast.get_source_segment(source_code, node) or "",
+                "methods": extract_methods(node, source_code),
             })
 
     return classes
@@ -369,8 +377,8 @@ def crawl_file(file_path: str) -> dict:
         "imports": extract_imports(tree),
         "module_variables": extract_module_level_variables(tree),
         "module_calls": extract_module_level_calls(tree),
-        "functions": extract_functions(tree),
-        "classes": extract_classes(tree),
+        "functions": extract_functions(tree, source_code),
+        "classes": extract_classes(tree, source_code),
     }
 
 
