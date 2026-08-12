@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 
 
-PROJECTS_ROOT = Path("projects")
+PROJECTS_ROOT = Path("source")
 
 
 def run_tests(
