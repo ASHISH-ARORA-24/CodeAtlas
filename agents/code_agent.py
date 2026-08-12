@@ -160,19 +160,23 @@ def execute_tool(project: str, tool_name: str, arguments: dict):
 # tool results — when making its next decision.
 # ---------------------------------------------------------
 
-def run_agent(project: str, question: str) -> str:
+def run_agent(project: str, question: str, verbose: bool = True) -> str:
     """
     Runs the CodeAtlas agent for one question.
 
     Keeps the full conversation in messages so OpenAI has complete
     context at every step of the loop.
+
+    verbose=True  → print tool calls, arguments, results, final answer (direct testing)
+    verbose=False → silent execution, only return the answer (used by executor workflow)
     """
-    print()
-    print("=" * 70)
-    print("CODEATLAS AGENT  (OpenAI GPT-4o mini)")
-    print("=" * 70)
-    print(f"Project  : {project}")
-    print(f"Question : {question}")
+    if verbose:
+        print()
+        print("=" * 70)
+        print("CODEATLAS AGENT  (OpenAI GPT-4o mini)")
+        print("=" * 70)
+        print(f"Project  : {project}")
+        print(f"Question : {question}")
 
     # The system message tells OpenAI its role and constraints.
     # This is sent with every request — it is always in context.
@@ -219,26 +223,25 @@ def run_agent(project: str, question: str) -> str:
         # Check if OpenAI wants to call any tools.
         if not message.tool_calls:
             # No tool calls = OpenAI has enough information to answer.
-            print()
-            print("=" * 70)
-            print("FINAL ANSWER")
-            print("=" * 70)
-            print(message.content)
+            if verbose:
+                print()
+                print("=" * 70)
+                print("FINAL ANSWER")
+                print("=" * 70)
+                print(message.content)
             return message.content
 
         # OpenAI requested one or more tools — execute each one.
         for tool_call in message.tool_calls:
-            print("===============================================")
-            print("====> tool_call : ", tool_call)
-            print("===============================================")
-            tool_name  = tool_call.function.name
-            arguments  = json.loads(tool_call.function.arguments)
+            tool_name = tool_call.function.name
+            arguments = json.loads(tool_call.function.arguments)
 
-            print()
-            print("-" * 70)
-            print(f"Agent selected tool : {tool_name}")
-            print(f"Arguments           : {arguments}")
-            print("-" * 70)
+            if verbose:
+                print()
+                print("-" * 70)
+                print(f"Agent selected tool : {tool_name}")
+                print(f"Arguments           : {arguments}")
+                print("-" * 70)
 
             try:
                 tool_result = execute_tool(
@@ -249,14 +252,14 @@ def run_agent(project: str, question: str) -> str:
             except Exception as exc:
                 tool_result = {"error": str(exc)}
 
-            # Display the tool result (truncated if very long).
-            preview = json.dumps(tool_result, indent=2, default=str)
-            print("Tool result:")
-            if len(preview) > 3000:
-                print(preview[:3000])
-                print("\n... truncated ...")
-            else:
-                print(preview)
+            if verbose:
+                preview = json.dumps(tool_result, indent=2, default=str)
+                print("Tool result:")
+                if len(preview) > 3000:
+                    print(preview[:3000])
+                    print("\n... truncated ...")
+                else:
+                    print(preview)
 
             # Send the tool result back to OpenAI.
             # OpenAI needs both the tool_call_id and the result to
