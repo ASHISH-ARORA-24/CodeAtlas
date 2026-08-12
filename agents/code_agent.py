@@ -1,15 +1,14 @@
 # CodeAtlas AI Agent.
 #
-# Accepts a project and a question. Decides which tools to call,
-# executes them, and returns a grounded answer.
-#
-# Uses OpenAI function calling — the LLM decides which tool to use
-# and with what arguments. Python executes the real tool and sends
-# the result back to the LLM.
+# Supports:
+# - semantic code search
+# - dependency analysis
+# - exact file reading
+# - source-code modification
+# - test execution
 #
 # Usage:
 #   PYTHONPATH=. uv run python3 agents/code_agent.py <project> "<question>"
-#   PYTHONPATH=. uv run python3 agents/code_agent.py codeatlas/ecommerce "what does StockManager.reserve_stock do?"
 
 import json
 import os
@@ -21,11 +20,14 @@ from openai import OpenAI
 from tools.code_search import search_code
 from tools.graph_tool import get_dependencies
 from tools.file_tool import read_file
+from tools.write_file import write_file
+from tools.run_tests import run_tests
+
 
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL   = "gpt-4o-mini"
+OPENAI_MODEL = "gpt-4o-mini"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -33,15 +35,17 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # ---------------------------------------------------------
 # 1. TOOL SCHEMAS
 #
-# These JSON schemas are sent to OpenAI along with every request.
-# OpenAI uses them to decide which tool to call and with what arguments.
+# These are descriptions/contracts given to OpenAI.
 #
-# Important: project is NOT in any schema because the agent already
-# knows the project. The LLM only decides parameters it cannot know
-# in advance — query, symbol, repo, file_path.
+# OpenAI decides which tool it wants.
+# Python executes the real function.
 # ---------------------------------------------------------
 
 TOOLS = [
+
+    # -----------------------------------------------------
+    # search_code
+    # -----------------------------------------------------
     {
         "type": "function",
         "function": {
@@ -64,6 +68,10 @@ TOOLS = [
             },
         },
     },
+
+    # -----------------------------------------------------
+    # get_dependencies
+    # -----------------------------------------------------
     {
         "type": "function",
         "function": {
@@ -78,13 +86,20 @@ TOOLS = [
                 "properties": {
                     "symbol": {
                         "type": "string",
-                        "description": "Function, method, or class name. Example: reserve_stock",
+                        "description": (
+                            "Function, method, or class name. "
+                            "Example: reserve_stock"
+                        ),
                     }
                 },
                 "required": ["symbol"],
             },
         },
     },
+
+    # -----------------------------------------------------
+    # read_file
+    # -----------------------------------------------------
     {
         "type": "function",
         "function": {
@@ -92,21 +107,104 @@ TOOLS = [
             "description": (
                 "Read the exact source code of a file inside one repository "
                 "belonging to the selected CodeAtlas project. "
-                "Use this when you need complete file content, not just a chunk."
+                "Use this when you need complete file content."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "repo": {
                         "type": "string",
-                        "description": "Repository name. Example: inventory_service",
+                        "description": (
+                            "Repository name. Example: inventory_service"
+                        ),
                     },
                     "file_path": {
                         "type": "string",
-                        "description": "File path relative to the repository root. Example: stock_manager.py",
+                        "description": (
+                            "File path relative to repository root. "
+                            "Example: stock_manager.py"
+                        ),
                     },
                 },
                 "required": ["repo", "file_path"],
+            },
+        },
+    },
+
+    # -----------------------------------------------------
+    # write_file
+    # -----------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "Overwrite an existing source file inside a repository "
+                "belonging to the selected CodeAtlas project. "
+                "Use this only when source code needs to be modified. "
+                "The complete new file content must be provided."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": (
+                            "Repository name. Example: inventory_service"
+                        ),
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "Existing file path relative to repository root."
+                        ),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Complete replacement content for the file."
+                        ),
+                    },
+                },
+                "required": [
+                    "repo",
+                    "file_path",
+                    "content",
+                ],
+            },
+        },
+    },
+
+    # -----------------------------------------------------
+    # run_tests
+    # -----------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "run_tests",
+            "description": (
+                "Run pytest inside a repository and return whether tests "
+                "passed or failed together with stdout and stderr. "
+                "Use this after modifying code to validate the change."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": (
+                            "Repository whose tests should be executed."
+                        ),
+                    },
+                    "test_command": {
+                        "type": "string",
+                        "description": (
+                            "Pytest command to execute. "
+                            "Example: pytest -q"
+                        ),
+                    },
+                },
+                "required": ["repo"],
             },
         },
     },
@@ -116,174 +214,309 @@ TOOLS = [
 # ---------------------------------------------------------
 # 2. TOOL EXECUTION
 #
-# OpenAI decides WHAT tool to call and with WHAT arguments.
-# This function actually runs the tool and returns the result.
+# OpenAI requests the tool.
+# Python executes the actual function.
 #
-# Project is injected here — the LLM never needs to choose it.
+# project is controlled by the application and is never
+# selected by the LLM.
 # ---------------------------------------------------------
 
-def execute_tool(project: str, tool_name: str, arguments: dict):
-    """
-    Executes the tool requested by OpenAI and returns the result.
+def execute_tool(
+    project: str,
+    tool_name: str,
+    arguments: dict,
+):
 
-    project is injected silently — it never appears in the tool schema
-    because it is already known for the entire agent session.
-    """
     if tool_name == "search_code":
-        return search_code(project=project, query=arguments["query"])
+
+        return search_code(
+            project=project,
+            query=arguments["query"],
+        )
 
     if tool_name == "get_dependencies":
-        return get_dependencies(project=project, symbol=arguments["symbol"])
+
+        return get_dependencies(
+            project=project,
+            symbol=arguments["symbol"],
+        )
 
     if tool_name == "read_file":
+
         return read_file(
             project=project,
             repo=arguments["repo"],
             file_path=arguments["file_path"],
         )
 
-    raise ValueError(f"Unknown tool: {tool_name}")
+    if tool_name == "write_file":
+
+        return write_file(
+            project=project,
+            repo=arguments["repo"],
+            file_path=arguments["file_path"],
+            content=arguments["content"],
+        )
+
+    if tool_name == "run_tests":
+
+        return run_tests(
+            project=project,
+            repo=arguments["repo"],
+            test_command=arguments.get(
+                "test_command",
+                "pytest -q",
+            ),
+        )
+
+    raise ValueError(
+        f"Unknown tool: {tool_name}"
+    )
 
 
 # ---------------------------------------------------------
 # 3. AGENT LOOP
 #
-# This is the core of how an agent works:
+# REASON
+#   ↓
+# ACT
+#   ↓
+# OBSERVE
+#   ↓
+# REASON AGAIN
 #
-#   1. Send question + tool schemas to OpenAI
-#   2. OpenAI returns either a tool call or a final answer
-#   3. If tool call → execute tool → send result back to OpenAI
-#   4. Repeat until OpenAI returns a final answer (no tool call)
-#
-# The full conversation history is kept in `messages` so OpenAI
-# always sees everything that happened — question, tool calls,
-# tool results — when making its next decision.
+# The loop ends only when OpenAI returns no tool calls.
 # ---------------------------------------------------------
 
-def run_agent(project: str, question: str, verbose: bool = True) -> str:
-    """
-    Runs the CodeAtlas agent for one question.
+def run_agent(
+    project: str,
+    question: str,
+    verbose: bool = True,
+) -> str:
 
-    Keeps the full conversation in messages so OpenAI has complete
-    context at every step of the loop.
-
-    verbose=True  → print tool calls, arguments, results, final answer (direct testing)
-    verbose=False → silent execution, only return the answer (used by executor workflow)
-    """
     if verbose:
+
         print()
         print("=" * 70)
-        print("CODEATLAS AGENT  (OpenAI GPT-4o mini)")
+        print("CODEATLAS CODING AGENT")
         print("=" * 70)
+
         print(f"Project  : {project}")
         print(f"Question : {question}")
 
-    # The system message tells OpenAI its role and constraints.
-    # This is sent with every request — it is always in context.
+    # -----------------------------------------------------
+    # SYSTEM INSTRUCTIONS
+    #
+    # This now supports both analysis and code modification.
+    # -----------------------------------------------------
+
     system_message = {
         "role": "system",
         "content": (
             "You are the CodeAtlas software engineering agent. "
-            "You help developers understand source code stored inside "
-            "a CodeAtlas project. "
-            "You have tools for semantic code search, graph dependency "
-            "analysis, and exact source-file reading. "
-            "Use tools when needed. "
-            "Do not assume facts about the codebase — ground your answer "
-            "in tool results only. "
-            "If you do not yet have enough information, call another tool."
+
+            "You operate inside one CodeAtlas project and can understand "
+            "and modify source code using the tools available to you. "
+
+            "You have tools for semantic code search, dependency analysis, "
+            "exact source-file reading, source-file modification, "
+            "and test execution. "
+
+            "Ground all decisions in tool results. "
+            "Do not assume facts about the codebase. "
+
+            "Before modifying a file, inspect the relevant source code. "
+
+            "When implementing a development task, investigate the relevant "
+            "code and dependencies before making changes. "
+
+            "Use write_file only when the task requires a source-code change. "
+
+            "After modifying code, run the relevant tests using run_tests. "
+
+            "If tests fail, analyze the test output, inspect relevant files "
+            "if necessary, correct the implementation, and run tests again. "
+
+            "Continue the reason-act-observe loop until the tests pass "
+            "or the problem cannot be safely resolved. "
+
+            "Do not claim that an implementation succeeded unless relevant "
+            "tests pass. "
+
+            "Do not modify unrelated files."
         ),
     }
 
-    # Conversation history — grows with every turn of the loop.
-    # OpenAI needs the full history to understand context.
+    # -----------------------------------------------------
+    # Conversation/context for THIS agent execution.
+    # -----------------------------------------------------
+
     messages = [
         system_message,
-        {"role": "user", "content": question},
+        {
+            "role": "user",
+            "content": question,
+        },
     ]
 
-    # Agent loop — runs until OpenAI gives a final answer with no tool call.
+    # -----------------------------------------------------
+    # AGENT LOOP
+    # -----------------------------------------------------
+
     while True:
 
-        # Send the full conversation to OpenAI.
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=messages,
             tools=TOOLS,
-            # "auto" lets OpenAI decide whether to call a tool or answer directly.
             tool_choice="auto",
         )
 
         message = response.choices[0].message
 
-        # Add OpenAI's response to conversation history so it is included
-        # in the next request — this is how OpenAI knows what it already did.
+        # Save OpenAI's decision into conversation history.
         messages.append(message)
 
-        # Check if OpenAI wants to call any tools.
+        # -------------------------------------------------
+        # No tool call means the agent believes it is done.
+        # -------------------------------------------------
+
         if not message.tool_calls:
             # No tool calls = OpenAI has enough information to answer.
             if verbose:
+
                 print()
                 print("=" * 70)
                 print("FINAL ANSWER")
                 print("=" * 70)
                 print(message.content)
+
             return message.content
 
-        # OpenAI requested one or more tools — execute each one.
+        # -------------------------------------------------
+        # Execute requested tools.
+        # -------------------------------------------------
+
         for tool_call in message.tool_calls:
+
             tool_name = tool_call.function.name
-            arguments = json.loads(tool_call.function.arguments)
+
+            arguments = json.loads(
+                tool_call.function.arguments
+            )
 
             if verbose:
+
                 print()
                 print("-" * 70)
-                print(f"Agent selected tool : {tool_name}")
-                print(f"Arguments           : {arguments}")
+
+                print(
+                    f"Agent selected tool : "
+                    f"{tool_name}"
+                )
+
+                print(
+                    f"Arguments           : "
+                    f"{arguments}"
+                )
+
                 print("-" * 70)
 
             try:
+
                 tool_result = execute_tool(
                     project=project,
                     tool_name=tool_name,
                     arguments=arguments,
                 )
+
             except Exception as exc:
-                tool_result = {"error": str(exc)}
+
+                tool_result = {
+                    "error": str(exc)
+                }
 
             if verbose:
-                preview = json.dumps(tool_result, indent=2, default=str)
+
+                preview = json.dumps(
+                    tool_result,
+                    indent=2,
+                    default=str,
+                )
+
                 print("Tool result:")
+
                 if len(preview) > 3000:
-                    print(preview[:3000])
-                    print("\n... truncated ...")
+
+                    print(
+                        preview[:3000]
+                    )
+
+                    print(
+                        "\n... truncated ..."
+                    )
+
                 else:
+
                     print(preview)
 
-            # Send the tool result back to OpenAI.
-            # OpenAI needs both the tool_call_id and the result to
-            # understand which tool was called and what it returned.
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": json.dumps(tool_result, default=str),
-            })
+            # -------------------------------------------------
+            # Tool result becomes the OBSERVATION.
+            #
+            # It is sent back to OpenAI so the model can reason
+            # about what happened and decide the next action.
+            # -------------------------------------------------
 
-        # Loop again — OpenAI now sees the tool results and decides
-        # whether to call another tool or give the final answer.
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(
+                        tool_result,
+                        default=str,
+                    ),
+                }
+            )
+
+        # Loop starts again.
+        #
+        # OpenAI now sees:
+        #
+        # question
+        # + previous decisions
+        # + tool calls
+        # + tool results
+        #
+        # and decides the next action.
 
 
 if __name__ == "__main__":
 
     if len(sys.argv) < 3:
-        print("Usage: PYTHONPATH=. uv run python3 agents/code_agent.py <project> \"<question>\"")
+
+        print(
+            'Usage: PYTHONPATH=. uv run python3 '
+            'agents/code_agent.py '
+            '<project> "<question>"'
+        )
+
         print()
+
         print("Example:")
-        print("  PYTHONPATH=. uv run python3 agents/code_agent.py codeatlas/ecommerce \"what does StockManager.reserve_stock do?\"")
+
+        print(
+            '  PYTHONPATH=. uv run python3 '
+            'agents/code_agent.py '
+            'codeatlas/ecommerce '
+            '"Add logging when stock reservation fails"'
+        )
+
         sys.exit(1)
 
-    PROJECT  = sys.argv[1]
+    PROJECT = sys.argv[1]
     QUESTION = sys.argv[2]
 
-    run_agent(project=PROJECT, question=QUESTION)
+    run_agent(
+        project=PROJECT,
+        question=QUESTION,
+    )
