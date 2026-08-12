@@ -204,7 +204,36 @@ PYTHONPATH=. uv run python3 tools/code_search.py codeatlas/ecommerce "query"
 
 ---
 
-## Iteration 2 — AI Agent with Tools
+## Iteration 1 — AI Agent with Tools ✅ Complete
+
+### What was built
+- `agents/code_agent.py` — OpenAI GPT-4o mini agent with explicit loop
+- `tools/code_search.py` — semantic search tool (wraps ChromaDB)
+- `tools/graph_tool.py` — dependency tool (wraps Neo4j)
+- `tools/file_tool.py` — file reader tool (reads from source/)
+- Switched entire project from Gemini to OpenAI (quota issues on Gemini free tier)
+
+### Key learnings
+- **Agent vs fixed pipeline** — fixed pipeline always calls ChromaDB + Neo4j. Agent *decides* which tools to use based on the question.
+- **Tool schema** — JSON schema sent to OpenAI. Only exposes parameters the LLM needs to decide. `project` is not exposed because it is already known — injected by code.
+- **Agent loop** — send messages → OpenAI returns tool call or final answer → if tool call, execute and append result → loop again
+- **`tool_choice="auto"`** — OpenAI decides whether to call a tool or answer directly
+- **`tool_call_id`** — every tool result must reference the tool call ID so OpenAI knows which call it is responding to
+- **Self-correction** — agent automatically retried `read_file` with corrected path when first attempt failed
+- **`messages` list** — full conversation history sent with every request. OpenAI has no memory — the history IS the memory.
+
+### Commands
+```bash
+# Run the agent
+PYTHONPATH=. uv run python3 agents/code_agent.py codeatlas/ecommerce "question"
+
+# Old fixed RAG pipeline (kept for comparison)
+PYTHONPATH=. uv run python3 qa/ask.py codeatlas/ecommerce "question"
+```
+
+---
+
+## Iteration 2 — State + Planning
 - **Status:** 🔲 Not started
 - **Goal:** Build an agent that *decides* which tools to use, instead of always searching ChromaDB and Neo4j
 - **Tools to implement:**

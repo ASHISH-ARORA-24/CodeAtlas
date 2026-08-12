@@ -20,7 +20,7 @@ import sys
 import chromadb
 from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
 from dotenv import load_dotenv
-from google import genai
+from openai import OpenAI
 from neo4j import GraphDatabase, Driver
 
 # load credentials from .env
@@ -29,14 +29,16 @@ load_dotenv()
 # number of ChromaDB chunks to retrieve per question
 TOP_K = 3
 
-# Gemini model to use — Flash is fast and free tier
-GEMINI_MODEL = "gemini-flash-latest"
+# OpenAI model to use
+OPENAI_MODEL = "gpt-4o-mini"
 
 # Neo4j connection settings
 NEO4J_URI      = os.getenv("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 def find_repos_in_project(project_path: str) -> list[str]:
@@ -248,20 +250,19 @@ def build_prompt(question: str, chunks: list[dict], neo4j_contexts: list[str]) -
     return "\n".join(prompt_lines)
 
 
-def ask_gemini(prompt: str) -> str:
+def ask_openai(prompt: str) -> str:
     """
-    Sends the prompt to Gemini Flash and returns the generated answer.
+    Sends the prompt to OpenAI GPT-4o mini and returns the generated answer.
 
-    Uses the google-genai SDK. The API key is read from .env.
-    Gemini reads the code context in the prompt and generates a
+    Uses the openai SDK. The API key is read from .env.
+    OpenAI reads the code context in the prompt and generates a
     plain English answer grounded in the actual code.
     """
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
+    response = openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[{"role": "user", "content": prompt}],
     )
-    return response.text
+    return response.choices[0].message.content
 
 
 def ask(project_path: str, question: str) -> None:
@@ -324,9 +325,9 @@ def ask(project_path: str, question: str) -> None:
     # step 3 — build prompt
     prompt = build_prompt(question, chunks, neo4j_contexts)
 
-    # step 4 — ask Gemini
-    print("\nAsking Gemini Flash...")
-    answer = ask_gemini(prompt)
+    # step 4 — ask OpenAI
+    print("\nAsking OpenAI GPT-4o mini...")
+    answer = ask_openai(prompt)
 
     print(f"\n{'='*60}")
     print("Answer:")
