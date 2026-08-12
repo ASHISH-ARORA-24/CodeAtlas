@@ -6,6 +6,7 @@
 # - exact file reading
 # - source-code modification
 # - test execution
+# - long-term project memory retrieval
 #
 # Usage:
 #   PYTHONPATH=. uv run python3 agents/code_agent.py <project> "<question>"
@@ -23,6 +24,8 @@ from tools.file_tool import read_file
 from tools.write_file import write_file
 from tools.run_tests import run_tests
 
+from memory.memory_store import get_memories, save_memory
+
 
 load_dotenv()
 
@@ -34,18 +37,40 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ---------------------------------------------------------
 # 1. TOOL SCHEMAS
-#
-# These are descriptions/contracts given to OpenAI.
-#
-# OpenAI decides which tool it wants.
-# Python executes the real function.
 # ---------------------------------------------------------
 
 TOOLS = [
-
-    # -----------------------------------------------------
-    # search_code
-    # -----------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": (
+                "Save stable and reusable project knowledge "
+                "to long-term memory. "
+                "Do not save temporary workflow information."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": (
+                            "Short name for the memory. "
+                            "Example: retry_library"
+                        ),
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": (
+                            "Reusable information to remember. "
+                            "Example: tenacity"
+                        ),
+                    },
+                },
+                "required": ["key", "value"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -68,10 +93,6 @@ TOOLS = [
             },
         },
     },
-
-    # -----------------------------------------------------
-    # get_dependencies
-    # -----------------------------------------------------
     {
         "type": "function",
         "function": {
@@ -97,9 +118,6 @@ TOOLS = [
         },
     },
 
-    # -----------------------------------------------------
-    # read_file
-    # -----------------------------------------------------
     {
         "type": "function",
         "function": {
@@ -131,9 +149,6 @@ TOOLS = [
         },
     },
 
-    # -----------------------------------------------------
-    # write_file
-    # -----------------------------------------------------
     {
         "type": "function",
         "function": {
@@ -175,9 +190,6 @@ TOOLS = [
         },
     },
 
-    # -----------------------------------------------------
-    # run_tests
-    # -----------------------------------------------------
     {
         "type": "function",
         "function": {
@@ -213,12 +225,6 @@ TOOLS = [
 
 # ---------------------------------------------------------
 # 2. TOOL EXECUTION
-#
-# OpenAI requests the tool.
-# Python executes the actual function.
-#
-# project is controlled by the application and is never
-# selected by the LLM.
 # ---------------------------------------------------------
 
 def execute_tool(
@@ -228,21 +234,18 @@ def execute_tool(
 ):
 
     if tool_name == "search_code":
-
         return search_code(
             project=project,
             query=arguments["query"],
         )
 
     if tool_name == "get_dependencies":
-
         return get_dependencies(
             project=project,
             symbol=arguments["symbol"],
         )
 
     if tool_name == "read_file":
-
         return read_file(
             project=project,
             repo=arguments["repo"],
@@ -250,7 +253,6 @@ def execute_tool(
         )
 
     if tool_name == "write_file":
-
         return write_file(
             project=project,
             repo=arguments["repo"],
@@ -259,7 +261,6 @@ def execute_tool(
         )
 
     if tool_name == "run_tests":
-
         return run_tests(
             project=project,
             repo=arguments["repo"],
@@ -267,6 +268,12 @@ def execute_tool(
                 "test_command",
                 "pytest -q",
             ),
+        )
+    if tool_name == "save_memory":
+        return save_memory(
+            project=project,
+            key=arguments["key"],
+            value=arguments["value"],
         )
 
     raise ValueError(
@@ -276,16 +283,6 @@ def execute_tool(
 
 # ---------------------------------------------------------
 # 3. AGENT LOOP
-#
-# REASON
-#   ↓
-# ACT
-#   ↓
-# OBSERVE
-#   ↓
-# REASON AGAIN
-#
-# The loop ends only when OpenAI returns no tool calls.
 # ---------------------------------------------------------
 
 def run_agent(
@@ -295,19 +292,38 @@ def run_agent(
 ) -> str:
 
     if verbose:
-
         print()
         print("=" * 70)
         print("CODEATLAS CODING AGENT")
         print("=" * 70)
-
         print(f"Project  : {project}")
         print(f"Question : {question}")
 
     # -----------------------------------------------------
-    # SYSTEM INSTRUCTIONS
+    # 4. LOAD LONG-TERM MEMORY
     #
-    # This now supports both analysis and code modification.
+    # Memory survives across executions.
+    # State does not.
+    # Messages/context are only for this run_agent().
+    # -----------------------------------------------------
+
+    memories = get_memories(project)
+
+    memory_text = "\n".join(
+        f"- {item['key']}: {item['value']}"
+        for item in memories
+    )
+
+    if not memory_text:
+        memory_text = "No stored project memory."
+
+    if verbose:
+        print()
+        print("LONG-TERM MEMORY")
+        print(memory_text)
+
+    # -----------------------------------------------------
+    # SYSTEM MESSAGE
     # -----------------------------------------------------
 
     system_message = {
@@ -343,12 +359,30 @@ def run_agent(
             "Do not claim that an implementation succeeded unless relevant "
             "tests pass. "
 
-            "Do not modify unrelated files."
+            "Do not modify unrelated files. "
+
+            "\n\nRelevant long-term project memory:\n"
+            f"{memory_text}\n\n"
+
+            "Treat long-term memory as useful prior knowledge, not guaranteed truth. "
+            "If current source code or tool results contradict memory, trust the "
+            "current source code and tool results."
+            "When you discover stable and reusable project knowledge that may help "
+            "future tasks, you may save it using save_memory. "
+
+            "Examples of useful memory include testing frameworks, naming conventions, "
+            "logging conventions, retry libraries, architectural patterns, and standard "
+            "repository practices. "
+
+            "Do not save temporary workflow state, current step numbers, transient errors, "
+            "temporary branch names, one-off test failures, or speculative conclusions. "
+
+            "Only save memory when the information is supported by current tool results. "
         ),
     }
 
     # -----------------------------------------------------
-    # Conversation/context for THIS agent execution.
+    # Context for THIS agent execution
     # -----------------------------------------------------
 
     messages = [
@@ -374,17 +408,13 @@ def run_agent(
 
         message = response.choices[0].message
 
-        # Save OpenAI's decision into conversation history.
+        # Remember this response for THIS run.
         messages.append(message)
 
-        # -------------------------------------------------
-        # No tool call means the agent believes it is done.
-        # -------------------------------------------------
-
+        # No tool call = agent finished.
         if not message.tool_calls:
-            # No tool calls = OpenAI has enough information to answer.
-            if verbose:
 
+            if verbose:
                 print()
                 print("=" * 70)
                 print("FINAL ANSWER")
@@ -393,10 +423,7 @@ def run_agent(
 
             return message.content
 
-        # -------------------------------------------------
         # Execute requested tools.
-        # -------------------------------------------------
-
         for tool_call in message.tool_calls:
 
             tool_name = tool_call.function.name
@@ -406,20 +433,16 @@ def run_agent(
             )
 
             if verbose:
-
                 print()
                 print("-" * 70)
-
                 print(
                     f"Agent selected tool : "
                     f"{tool_name}"
                 )
-
                 print(
                     f"Arguments           : "
                     f"{arguments}"
                 )
-
                 print("-" * 70)
 
             try:
@@ -447,26 +470,16 @@ def run_agent(
                 print("Tool result:")
 
                 if len(preview) > 3000:
-
                     print(
                         preview[:3000]
                     )
-
                     print(
                         "\n... truncated ..."
                     )
-
                 else:
-
                     print(preview)
 
-            # -------------------------------------------------
-            # Tool result becomes the OBSERVATION.
-            #
-            # It is sent back to OpenAI so the model can reason
-            # about what happened and decide the next action.
-            # -------------------------------------------------
-
+            # Tool result becomes observation.
             messages.append(
                 {
                     "role": "tool",
@@ -477,17 +490,6 @@ def run_agent(
                     ),
                 }
             )
-
-        # Loop starts again.
-        #
-        # OpenAI now sees:
-        #
-        # question
-        # + previous decisions
-        # + tool calls
-        # + tool results
-        #
-        # and decides the next action.
 
 
 if __name__ == "__main__":
@@ -501,14 +503,13 @@ if __name__ == "__main__":
         )
 
         print()
-
         print("Example:")
 
         print(
             '  PYTHONPATH=. uv run python3 '
             'agents/code_agent.py '
             'codeatlas/ecommerce '
-            '"Add logging when stock reservation fails"'
+            '"What test framework does this project use?"'
         )
 
         sys.exit(1)
@@ -519,4 +520,5 @@ if __name__ == "__main__":
     run_agent(
         project=PROJECT,
         question=QUESTION,
+        verbose=True,
     )

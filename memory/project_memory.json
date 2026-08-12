@@ -1,0 +1,20 @@
+{
+  "codeatlas/ecommerce": [
+    {
+      "key": "test_framework",
+      "value": "pytest"
+    },
+    {
+      "key": "naming_convention",
+      "value": "snake_case"
+    },
+    {
+      "key": "logging",
+      "value": "Uses Python logging module"
+    },
+    {
+      "key": "order_cancellation_retry_logic",
+      "value": "The project uses a convention of not marking orders as canceled unless all associated stock release operations succeed, allowing for potential retries in failure scenarios."
+    }
+  ]
+}
