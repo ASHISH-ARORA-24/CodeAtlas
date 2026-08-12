@@ -138,7 +138,7 @@ This document is updated after every logical chunk is completed. It serves as th
   - Command: `PYTHONPATH=. uv run python3 qa/ask.py <repo> "<question>"`
 
 ### Chunk 9 — Ecommerce Microservices Sample and Chunker Bug Fix
-- **Status:** ✅ Done
+- **Status:** ✅ Done (renamed from Chunk D for clarity)
 - **What we did:** Built `source/codeatlas/ecommerce/` — a two-service sample project (Inventory Service + Order Service) that exercises CodeAtlas's cross-service capabilities. Also discovered and fixed a real chunker bug: files with identical names in different folders (e.g., `inventory_service/main.py` vs `order_service/main.py`) collided in ChromaDB because the file_key only used the basename. Fixed by extracting the full relative path from "source/" and using that in file_key, making chunk IDs globally unique.
 - **Key learnings:**
   - A meaningful sample exposed a real limitation: the AST crawler can trace function calls within a service perfectly, but cannot trace HTTP calls across services (they go over the network, not through Python imports)
@@ -165,8 +165,53 @@ This document is updated after every logical chunk is completed. It serves as th
 
 ---
 
-## Iteration 2 — Structured Python Project
+## Iteration 1 — Complete ✅
+
+**End-to-end RAG pipeline is fully working:**
+- AST crawler extracts code structure from Python files
+- JSON output mirrors source folder hierarchy
+- ChromaDB stores semantic embeddings (36 chunks for ecommerce, 7 each for samples)
+- Neo4j builds knowledge graph with structural relationships
+- Q&A pipeline searches across project-scoped repos and returns grounded answers
+
+**Architecture improvements made:**
+- Fixed chunker file collision bug (full relative paths in chunk IDs)
+- Made Q&A project-centric (search across multiple repos in one project)
+- Proper 3-level hierarchy: owner/project/repo (mirrors sample structure)
+- Project scope preserved across all searches
+
+**Four repos indexed and tested:**
+- codeatlas/sample: calculator, grade_calculator
+- codeatlas/ecommerce: inventory_service, order_service
+
+**Commands available:**
+```bash
+# Crawl a repo
+PYTHONPATH=. uv run python3 crawlers/crawl_project.py source/codeatlas/ecommerce/inventory_service
+
+# Chunk a repo
+PYTHONPATH=. uv run python3 chunkers/python_chunker.py source/codeatlas/ecommerce/inventory_service
+
+# Load to Neo4j
+PYTHONPATH=. uv run python3 neo4j_loader/load_project.py source/codeatlas/ecommerce/inventory_service
+
+# Ask questions (project-scoped)
+PYTHONPATH=. uv run python3 qa/ask.py codeatlas/ecommerce "question"
+
+# Search code semantically
+PYTHONPATH=. uv run python3 tools/code_search.py codeatlas/ecommerce "query"
+```
+
+---
+
+## Iteration 2 — AI Agent with Tools
 - **Status:** 🔲 Not started
+- **Goal:** Build an agent that *decides* which tools to use, instead of always searching ChromaDB and Neo4j
+- **Tools to implement:**
+  - `search_code()` — semantic search in ChromaDB
+  - `get_dependencies()` — structural context from Neo4j
+  - `read_file()` — read exact source files
+- **Framework:** Plain Python agent loop (no LangChain/LangGraph), OpenAI API, visible tool execution
 
 ## Iteration 3 — Microservices on Azure
 - **Status:** 🔲 Not started
