@@ -1,14 +1,18 @@
 # Q&A script for CodeAtlas.
 # Takes a user question in plain English, searches ChromaDB for relevant
-# code chunks, enriches with Neo4j graph context, and sends everything
-# to Gemini Flash to generate a grounded answer.
+# code chunks across an entire project, enriches with Neo4j graph context,
+# and sends everything to Gemini Flash to generate a grounded answer.
 #
 # This is the final piece of the RAG pipeline:
-#   ChromaDB (semantic search) + Neo4j (structural context) → Gemini (answer)
+#   ChromaDB (semantic search across all repos) + Neo4j (structural context) → Gemini (answer)
 #
 # Usage:
-#   PYTHONPATH=. uv run python3 qa/ask.py <repo> "<question>"
-#   PYTHONPATH=. uv run python3 qa/ask.py grade_calculator "how is the average calculated?"
+#   PYTHONPATH=. uv run python3 qa/ask.py <project> "<question>"
+#   PYTHONPATH=. uv run python3 qa/ask.py codeatlas/sample "how is the average calculated?"
+#   PYTHONPATH=. uv run python3 qa/ask.py codeatlas/ecommerce "how does order reservation work?"
+#
+# The project identifier is a path like "owner/project" or "owner/project/repo".
+# If multiple repos exist in the project, searches all of them in parallel.
 
 import os
 import sys
@@ -35,40 +39,103 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 
-def search_chromadb(repo: str, question: str) -> list[dict]:
+def find_repos_in_project(project_path: str) -> list[str]:
     """
-    Searches ChromaDB for the most semantically similar chunks to the question.
+    Finds all repo names (ChromaDB collections) for a given project.
 
-    Converts the question to a vector using the same embedding model used
-    at index time (all-MiniLM-L6-v2) and finds the top K closest chunks.
+    Scans the output folder for _project.json files that match the project path.
+    Returns a list of unique repo names found.
+
+    Example: project_path="codeatlas/ecommerce" finds all repos in
+    output/codeatlas/ecommerce/ folders (inventory_service, order_service, etc.)
+    """
+    from pathlib import Path
+    import json
+
+    output_root = Path("output")
+    repos = set()
+
+    # scan output folder for _project.json files
+    for project_json in output_root.rglob("_project.json"):
+        try:
+            with open(project_json, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+
+            # check if this project matches the requested one
+            # project_path can be "owner/project" or "owner/project/repo"
+            path_parts = project_path.split("/")
+            meta_owner = metadata.get("owner", "")
+            meta_project = metadata.get("project", "")
+            meta_repo = metadata.get("repo", "")
+
+            # match owner/project
+            if len(path_parts) >= 2:
+                if meta_owner == path_parts[0] and meta_project == path_parts[1]:
+                    repos.add(meta_repo)
+
+            # match owner/project/repo (specific repo)
+            if len(path_parts) >= 3:
+                if meta_owner == path_parts[0] and meta_project == path_parts[1] and meta_repo == path_parts[2]:
+                    repos.add(meta_repo)
+        except Exception:
+            # skip files that can't be parsed
+            pass
+
+    return sorted(list(repos))
+
+
+def search_chromadb(project_path: str, question: str) -> list[dict]:
+    """
+    Searches ChromaDB across all repos in a project for the most semantically
+    similar chunks to the question.
+
+    Finds all ChromaDB collections for the project, queries each with the question,
+    and combines results. Returns the top K results overall, sorted by similarity.
 
     Returns a list of dicts, one per result, with keys:
     - id: the chunk ID (e.g. grade_calculator::utils.py::calculate_average)
     - text: the full chunk text
-    - metadata: type, name, file, last_modified
+    - metadata: type, name, file, repo, last_modified
     - distance: how far the chunk vector is from the question vector (lower = more similar)
     """
+    repos = find_repos_in_project(project_path)
+
+    if not repos:
+        return []
+
     client = chromadb.PersistentClient(path="chroma_db/")
-    collection = client.get_collection(
-        name=repo,
-        embedding_function=ONNXMiniLM_L6_V2(),
-    )
+    embedding_function = ONNXMiniLM_L6_V2()
 
-    results = collection.query(
-        query_texts=[question],
-        n_results=min(TOP_K, collection.count()),
-    )
+    all_chunks = []
 
-    chunks = []
-    for i in range(len(results["ids"][0])):
-        chunks.append({
-            "id": results["ids"][0][i],
-            "text": results["documents"][0][i],
-            "metadata": results["metadatas"][0][i],
-            "distance": results["distances"][0][i],
-        })
+    # search each repo's collection
+    for repo in repos:
+        try:
+            collection = client.get_collection(
+                name=repo,
+                embedding_function=embedding_function,
+            )
 
-    return chunks
+            results = collection.query(
+                query_texts=[question],
+                n_results=min(TOP_K, collection.count()),
+            )
+
+            for i in range(len(results["ids"][0])):
+                all_chunks.append({
+                    "id": results["ids"][0][i],
+                    "text": results["documents"][0][i],
+                    "metadata": results["metadatas"][0][i],
+                    "distance": results["distances"][0][i],
+                    "repo": repo,
+                })
+        except Exception:
+            # collection might not exist, skip
+            pass
+
+    # sort by distance (lower = more similar) and take top K overall
+    all_chunks.sort(key=lambda x: x["distance"])
+    return all_chunks[:TOP_K]
 
 
 def get_neo4j_context(driver: Driver, chunk: dict, repo: str) -> str:
@@ -197,32 +264,40 @@ def ask_gemini(prompt: str) -> str:
     return response.text
 
 
-def ask(repo: str, question: str) -> None:
+def ask(project_path: str, question: str) -> None:
     """
     Orchestrates the full Q&A pipeline for one question.
 
     Steps:
-    1. Search ChromaDB for relevant chunks
-    2. Connect to Neo4j and enrich each chunk with graph context
-    3. Build the prompt combining chunks + graph context + question
-    4. Send to Gemini Flash and print the answer
+    1. Find all repos in the project
+    2. Search ChromaDB across all repos for relevant chunks
+    3. Connect to Neo4j and enrich each chunk with graph context
+    4. Build the prompt combining chunks + graph context + question
+    5. Send to Gemini Flash and print the answer
+
+    project_path should be "owner/project" or "owner/project/repo" format.
     """
     print(f"\nQuestion : {question}")
-    print(f"Repo     : {repo}")
+    print(f"Project  : {project_path}")
     print(f"{'='*60}")
 
-    # step 1 — find relevant chunks
-    print("\nSearching ChromaDB...")
-    chunks = search_chromadb(repo, question)
+    # step 1 — find relevant chunks across all repos in the project
+    print("\nSearching ChromaDB across project repos...")
+    chunks = search_chromadb(project_path, question)
 
     if not chunks:
         print("No relevant chunks found. Has the repo been indexed?")
         return
 
+    if not chunks:
+        print("No relevant chunks found. Has the project been indexed?")
+        return
+
     print(f"Found {len(chunks)} relevant chunks:")
     for chunk in chunks:
         similarity = round(1 - chunk["distance"], 4)
-        print(f"  {chunk['metadata'].get('type', '?'):8} {chunk['metadata'].get('name', '?')} (similarity: {similarity})")
+        repo_display = chunk.get("repo", "?")
+        print(f"  {chunk['metadata'].get('type', '?'):8} {chunk['metadata'].get('name', '?')} (repo: {repo_display}, similarity: {similarity})")
 
     # step 2 — enrich with Neo4j graph context
     print("\nFetching Neo4j context...")
@@ -230,17 +305,19 @@ def ask(repo: str, question: str) -> None:
     neo4j_contexts = []
     try:
         for i, chunk in enumerate(chunks, start=1):
+            # get repo from chunk metadata (added by search_chromadb)
+            repo = chunk.get("repo", "unknown")
             context = get_neo4j_context(driver, chunk, repo)
             neo4j_contexts.append(context)
 
             # display what Neo4j found for this chunk
             chunk_name = chunk['metadata'].get('name', '?')
             if context:
-                print(f"\n  [{i}] {chunk_name} — graph context:")
+                print(f"\n  [{i}] {chunk_name} ({repo}) — graph context:")
                 for line in context.split('\n'):
                     print(f"      {line}")
             else:
-                print(f"\n  [{i}] {chunk_name} — no graph context found")
+                print(f"\n  [{i}] {chunk_name} ({repo}) — no graph context found")
     finally:
         driver.close()
 
@@ -259,9 +336,12 @@ def ask(repo: str, question: str) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: PYTHONPATH=. uv run python3 qa/ask.py <repo> \"<question>\"")
+        print("Usage: PYTHONPATH=. uv run python3 qa/ask.py <project> \"<question>\"")
+        print("\nExamples:")
+        print("  PYTHONPATH=. uv run python3 qa/ask.py codeatlas/sample \"question\"")
+        print("  PYTHONPATH=. uv run python3 qa/ask.py codeatlas/ecommerce \"question\"")
         sys.exit(1)
 
-    REPO     = sys.argv[1]
-    QUESTION = sys.argv[2]
-    ask(REPO, QUESTION)
+    PROJECT_PATH = sys.argv[1]
+    QUESTION     = sys.argv[2]
+    ask(PROJECT_PATH, QUESTION)
