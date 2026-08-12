@@ -291,7 +291,7 @@ def execute_tool(
 def run_agent(
     project: str,
     question: str,
-    verbose: bool = True,
+    verbose: bool = False,
 ) -> str:
 
     if verbose:

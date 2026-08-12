@@ -8,7 +8,7 @@ from agents.synthesizer import synthesize_result
 
 def execute_current_step(state: dict) -> dict:
     """
-    Executes the current planning step using the existing CodeAtlas agent.
+    Execute the current planning step using the CodeAtlas coding agent.
 
     Flow:
         state
@@ -17,7 +17,9 @@ def execute_current_step(state: dict) -> dict:
           ↓
         code_agent
           ↓
-        findings
+        investigate / modify / test
+          ↓
+        step result
     """
 
     current_step_id = state["current_step"]
@@ -43,11 +45,29 @@ Original task:
 Current planning step:
 {step_action}
 
-Investigate this step using the available CodeAtlas tools.
+Execute this planning step using the available CodeAtlas tools.
 
-Do not modify code.
+You may:
+- search code
+- analyze dependencies
+- read source files
+- modify source files when required
+- run tests
 
-Return your findings for this planning step.
+If this step requires a code change:
+1. Inspect the relevant source code first.
+2. Make the required change using write_file.
+3. Run the relevant tests using run_tests.
+4. If tests fail, analyze the failure.
+5. Fix the implementation.
+6. Run the tests again.
+7. Continue until tests pass or the issue cannot be safely resolved.
+
+Do not modify unrelated files.
+
+Do not claim that a code change succeeded unless relevant tests pass.
+
+Return the result of this planning step.
 """
 
     result = run_agent(
@@ -67,31 +87,34 @@ Return your findings for this planning step.
 
 def execute_plan(state: dict) -> dict:
     """
-    Executes all planning steps.
+    Execute every planning step.
 
     This is the OUTER workflow loop.
 
-    For every step:
+    For each step:
         1. Execute current step
-        2. Store result in state
-        3. Increment current_step
+        2. Save result in state
+        3. Move to next step
 
-    When all steps finish:
-        status = completed
+    The code_agent has its own INNER agent loop.
     """
 
-    total_steps = len(state["plan"]["steps"])
+    total_steps = len(
+        state["plan"]["steps"]
+    )
 
     state["status"] = "in_progress"
 
     while state["current_step"] <= total_steps:
 
-        step_result = execute_current_step(state)
+        step_result = execute_current_step(
+            state
+        )
 
-        # Store findings from this planning step.
-        state["step_results"].append(step_result)
+        state["step_results"].append(
+            step_result
+        )
 
-        # Move workflow to next step.
         state["current_step"] += 1
 
     state["status"] = "completed"
@@ -99,9 +122,12 @@ def execute_plan(state: dict) -> dict:
     return state
 
 
-def run_workflow(project: str, task: str) -> str:
+def run_workflow(
+    project: str,
+    task: str,
+) -> str:
     """
-    Runs the complete Iteration 2 workflow.
+    Run the complete CodeAtlas coding workflow.
 
     Task
       ↓
@@ -109,17 +135,18 @@ def run_workflow(project: str, task: str) -> str:
       ↓
     State
       ↓
-    Execute all plan steps
+    Execute plan steps
+      ↓
+    Investigate / Modify / Test / Fix
       ↓
     Final synthesis
-      ↓
-    Final recommendation
     """
 
     print()
     print("=" * 70)
-    print("CODEATLAS PLANNING WORKFLOW")
+    print("CODEATLAS CODING WORKFLOW")
     print("=" * 70)
+
     print(f"Project : {project}")
     print(f"Task    : {task}")
 
@@ -133,13 +160,14 @@ def run_workflow(project: str, task: str) -> str:
     print("PLAN")
 
     for step in plan["steps"]:
+
         print(
             f"  {step['id']}. "
             f"{step['action']}"
         )
 
     # ---------------------------------------------------------
-    # 2. CREATE INITIAL STATE
+    # 2. CREATE STATE
     # ---------------------------------------------------------
 
     state = create_initial_state(
@@ -149,10 +177,12 @@ def run_workflow(project: str, task: str) -> str:
     )
 
     # ---------------------------------------------------------
-    # 3. EXECUTE PLAN
+    # 3. EXECUTE COMPLETE PLAN
     # ---------------------------------------------------------
 
-    final_state = execute_plan(state)
+    final_state = execute_plan(
+        state
+    )
 
     # ---------------------------------------------------------
     # 4. FINAL SYNTHESIS
@@ -164,8 +194,9 @@ def run_workflow(project: str, task: str) -> str:
 
     print()
     print("=" * 70)
-    print("FINAL RECOMMENDATION")
+    print("FINAL RESULT")
     print("=" * 70)
+
     print(final_answer)
 
     return final_answer
@@ -177,7 +208,8 @@ if __name__ == "__main__":
 
         print(
             'Usage: PYTHONPATH=. uv run python3 '
-            'agents/executor.py <project> "<task>"'
+            'agents/executor.py '
+            '<project> "<task>"'
         )
 
         print()

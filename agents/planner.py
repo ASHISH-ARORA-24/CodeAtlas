@@ -4,7 +4,9 @@ import sys
 
 from dotenv import load_dotenv
 from openai import OpenAI
+
 from agents.state import create_initial_state
+
 
 load_dotenv()
 
@@ -17,18 +19,28 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 PLANNER_SYSTEM_PROMPT = """
 You are the planning component of CodeAtlas.
 
-Your job is to create a software-development investigation plan
-before any code is modified.
+Your job is to create a structured software-development plan
+for completing the user's task.
 
-The plan should:
+The plan should normally cover:
+
 1. Understand the requirement.
-2. Investigate relevant code.
+2. Investigate the relevant code.
 3. Analyze dependencies and impact.
 4. Identify affected files/components.
-5. Define implementation steps.
+5. Implement the required code change.
+6. Run relevant tests.
+7. If tests fail, analyze the failure, fix the implementation,
+   and run the tests again.
 
-Do not modify code.
-Do not invent file names or implementation details before investigation.
+Important rules:
+
+- Create task-specific steps.
+- Do not invent file names or implementation details before investigation.
+- Investigation should happen before modification.
+- Testing must happen after code modification.
+- If testing fails, the plan should allow correction and retesting.
+- Do not include unrelated work.
 
 Return JSON only in this structure:
 
@@ -45,6 +57,10 @@ Return JSON only in this structure:
 
 
 def create_plan(task: str) -> dict:
+    """
+    Ask OpenAI to convert the development task into
+    a structured execution plan.
+    """
 
     response = client.chat.completions.create(
         model=OPENAI_MODEL,
@@ -58,7 +74,9 @@ def create_plan(task: str) -> dict:
                 "content": task,
             },
         ],
-        response_format={"type": "json_object"},
+        response_format={
+            "type": "json_object"
+        },
     )
 
     plan_text = response.choices[0].message.content
@@ -68,21 +86,41 @@ def create_plan(task: str) -> dict:
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
+
         print(
             'Usage: PYTHONPATH=. uv run python3 '
-            'agents/planner.py "<task>"'
+            'agents/planner.py <project> "<task>"'
         )
+
+        print()
+        print("Example:")
+
+        print(
+            '  PYTHONPATH=. uv run python3 '
+            'agents/planner.py '
+            'codeatlas/ecommerce '
+            '"Add logging when stock reservation fails"'
+        )
+
         sys.exit(1)
 
-    TASK = sys.argv[1]
+    PROJECT = sys.argv[1]
+    TASK = sys.argv[2]
 
+    # Create the LLM-generated plan.
     plan = create_plan(TASK)
 
+    # Put the plan into workflow state.
     state = create_initial_state(
-        project="codeatlas/ecommerce",
+        project=PROJECT,
         task=TASK,
         plan=plan,
     )
 
-    print(json.dumps(state, indent=2))
+    print(
+        json.dumps(
+            state,
+            indent=2,
+        )
+    )
