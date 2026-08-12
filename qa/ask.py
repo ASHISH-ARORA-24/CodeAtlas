@@ -229,9 +229,18 @@ def ask(repo: str, question: str) -> None:
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
     neo4j_contexts = []
     try:
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks, start=1):
             context = get_neo4j_context(driver, chunk, repo)
             neo4j_contexts.append(context)
+
+            # display what Neo4j found for this chunk
+            chunk_name = chunk['metadata'].get('name', '?')
+            if context:
+                print(f"\n  [{i}] {chunk_name} — graph context:")
+                for line in context.split('\n'):
+                    print(f"      {line}")
+            else:
+                print(f"\n  [{i}] {chunk_name} — no graph context found")
     finally:
         driver.close()
 
