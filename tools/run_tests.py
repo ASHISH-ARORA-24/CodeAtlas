@@ -47,11 +47,24 @@ def run_tests(
             "Only pytest commands are allowed in this iteration."
         )
 
+    # Use "python -m pytest" instead of bare "pytest" so it always picks
+    # up the pytest installed in the current virtual environment rather
+    # than looking for a pytest binary in PATH (which may not exist).
+    command = ["python", "-m"] + test_command.split()
+
+    # Set PYTHONPATH to the project root's source/ folder so absolute imports
+    # like "from codeatlas.ecommerce.inventory_service.models import StockLevel"
+    # resolve correctly when running tests from any repo subfolder.
+    import os
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path("source").resolve())
+
     result = subprocess.run(
-        test_command.split(),
+        command,
         cwd=repo_root,
         capture_output=True,
         text=True,
+        env=env,
     )
 
     return {

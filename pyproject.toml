@@ -16,3 +16,8 @@ dependencies = [
 members = [
     "source/codeatlas/sample/grade_calculator",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
