@@ -137,6 +137,32 @@ This document is updated after every logical chunk is completed. It serves as th
   - The Q&A script is separate from the indexing pipeline — indexing runs once when a repo is added, Q&A runs on every user question
   - Command: `PYTHONPATH=. uv run python3 qa/ask.py <repo> "<question>"`
 
+### Chunk 9 — Ecommerce Microservices Sample and Chunker Bug Fix
+- **Status:** ✅ Done
+- **What we did:** Built `source/codeatlas/ecommerce/` — a two-service sample project (Inventory Service + Order Service) that exercises CodeAtlas's cross-service capabilities. Also discovered and fixed a real chunker bug: files with identical names in different folders (e.g., `inventory_service/main.py` vs `order_service/main.py`) collided in ChromaDB because the file_key only used the basename. Fixed by extracting the full relative path from "source/" and using that in file_key, making chunk IDs globally unique.
+- **Key learnings:**
+  - A meaningful sample exposed a real limitation: the AST crawler can trace function calls within a service perfectly, but cannot trace HTTP calls across services (they go over the network, not through Python imports)
+  - Semantic search via ChromaDB compensates for this — rich docstrings allow Gemini to understand cross-service flows even without graph edges
+  - Rollback logic in `_reserve_all_items()` is exactly the kind of complex transactional pattern CodeAtlas should index — shows why docstrings matter
+  - The anti-corruption layer pattern (isolating all cross-service calls in `inventory_client.py`) is real microservices design, valuable to understand through code
+  - File collision bug shows why file_key must be globally unique — basename alone is insufficient when the same filename appears in multiple directories
+  - Incremental crawling via timestamps works correctly even with the new file path structure
+  - ChromaDB chunk IDs are now: `repo::relative/path/from/source/filename.py::name` instead of `repo::filename.py::name`
+- **Files created:**
+  - `source/codeatlas/ecommerce/README.md` — project overview explaining the sample
+  - `source/codeatlas/ecommerce/inventory_service/` — 3 files (models, stock_manager, main)
+  - `source/codeatlas/ecommerce/order_service/` — 4 files (models, order_manager, inventory_client, main)
+  - Updated `chunkers/python_chunker.py` with the fix for file collision
+  - Enhanced `qa/ask.py` to display Neo4j graph context, making both ChromaDB + Neo4j contributions visible
+- **Testing:**
+  - All three samples indexed: calculator (7 chunks), grade_calculator (7 chunks), ecommerce (36 chunks)
+  - Cross-service Q&A tested successfully:
+    - "What does StockManager.reserve_stock do?" — within-service, perfect via semantic search + graph
+    - "How does Order Service reserve stock from Inventory?" — cross-service, ChromaDB found the right chunks despite HTTP boundary, Gemini connected the flow
+    - "What happens when an order can't be fully reserved?" — complex logic, rollback behavior correctly retrieved and explained
+  - Neo4j graph shows call relationships: `reserve_stock` is called by `_reserve_all_items` (cross-service detection), even though the HTTP boundary prevents a direct edge
+- **Known limitation documented:** The "Repo : unknown" issue for ecommerce because the folder structure is 3 levels (owner/project/services) instead of the expected 4 (owner/project/repo). Does not break functionality — deferred to Iteration 2 for architectural discussion.
+
 ---
 
 ## Iteration 2 — Structured Python Project
