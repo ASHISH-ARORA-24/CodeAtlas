@@ -236,8 +236,18 @@ def chunk_file(collection: chromadb.Collection, file_data: dict, repo: str) -> d
     4. Delete any stale chunk IDs that no longer exist
     """
     file_name = file_data["file"]
+    file_path = file_data.get("path", "")
     timestamp = file_data.get("last_modified", "")
-    file_key = f"{repo}::{file_name}"
+
+    # Extract the relative path from "source/" to handle files with the same name
+    # in different folders (e.g. inventory_service/main.py vs order_service/main.py).
+    # This makes the file_key globally unique across the project.
+    if file_path and file_path.startswith("source/"):
+        relative_path = file_path[7:]  # strip "source/" prefix
+    else:
+        relative_path = file_name
+
+    file_key = f"{repo}::{relative_path}"
 
     # check if this file's chunks are already up to date
     if is_file_unchanged_in_chromadb(collection, file_key, timestamp):
@@ -257,7 +267,7 @@ def chunk_file(collection: chromadb.Collection, file_data: dict, repo: str) -> d
 
     # --- chunk standalone functions ---
     for func in file_data.get("functions", []):
-        chunk_id = build_chunk_id(repo, file_name, func["name"])
+        chunk_id = build_chunk_id(repo, relative_path, func["name"])
         text = build_function_text(func, file_name)
         metadata = {**base_metadata, "type": "function", "name": func["name"]}
         add_chunks_to_chromadb(collection, chunk_id, text, metadata)
@@ -266,7 +276,7 @@ def chunk_file(collection: chromadb.Collection, file_data: dict, repo: str) -> d
     # --- chunk classes and their methods ---
     for cls in file_data.get("classes", []):
         # one chunk for the class itself
-        class_chunk_id = build_chunk_id(repo, file_name, cls["name"])
+        class_chunk_id = build_chunk_id(repo, relative_path, cls["name"])
         class_text = build_class_text(cls, file_name)
         class_metadata = {**base_metadata, "type": "class", "name": cls["name"]}
         add_chunks_to_chromadb(collection, class_chunk_id, class_text, class_metadata)
@@ -274,7 +284,7 @@ def chunk_file(collection: chromadb.Collection, file_data: dict, repo: str) -> d
 
         # one chunk per method
         for method in cls.get("methods", []):
-            method_chunk_id = build_chunk_id(repo, file_name, cls["name"], method["name"])
+            method_chunk_id = build_chunk_id(repo, relative_path, cls["name"], method["name"])
             method_text = build_method_text(method, cls["name"], file_name)
             method_metadata = {
                 **base_metadata,
