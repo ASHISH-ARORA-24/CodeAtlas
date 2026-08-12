@@ -70,8 +70,12 @@ def write_file(
         encoding="utf-8"
     )
 
+    # Strip null bytes — LLMs sometimes encode special characters (e.g. em-dashes)
+    # as \x00 in JSON responses, which produces binary files unreadable by editors.
+    clean_content = content.replace("\x00", "")
+
     requested_file.write_text(
-        content,
+        clean_content,
         encoding="utf-8"
     )
 
