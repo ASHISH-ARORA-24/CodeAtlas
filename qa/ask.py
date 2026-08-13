@@ -287,10 +287,6 @@ def ask(project_path: str, question: str) -> None:
     chunks = search_chromadb(project_path, question)
 
     if not chunks:
-        print("No relevant chunks found. Has the repo been indexed?")
-        return
-
-    if not chunks:
         print("No relevant chunks found. Has the project been indexed?")
         return
 
