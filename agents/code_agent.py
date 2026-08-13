@@ -387,6 +387,8 @@ def run_agent(project: str, question: str, verbose: bool = False, return_trace: 
                 tool=tool_name,
             )
 
+            tool_start = time.perf_counter()
+
             if verbose:
                 print()
                 print("-" * 70)
@@ -424,10 +426,13 @@ def run_agent(project: str, question: str, verbose: bool = False, return_trace: 
 
             tool_trace["success"] = "error" not in tool_result
 
+            tool_duration = time.perf_counter() - tool_start
+
             add_event(
                 trace,
                 "tool_call_end",
                 tool=tool_name,
+                duration_ms=round(tool_duration * 1000, 2),
                 success=tool_trace["success"],
             )
 
