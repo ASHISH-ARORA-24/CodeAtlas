@@ -1,0 +1,46 @@
+[
+  {
+    "id": "negative_stock_validation",
+    "task": "Add validation for negative stock quantity.",
+    "expected_files": [
+      "inventory_service/stock_manager.py"
+    ],
+    "expected_symbols": [
+      "_validate_quantity"
+    ],
+    "must_pass_tests": true,
+    "forbidden_files": [
+      "order_service/order_manager.py"
+    ],
+    "expected_outcome": "Negative or zero stock quantities should be rejected without changing unrelated behavior."
+  },
+  {
+    "id": "stock_reservation_logging",
+    "task": "Add warning logging when stock reservation fails.",
+    "expected_files": [
+      "inventory_service/main.py"
+    ],
+    "expected_symbols": [
+      "handle_reserve_stock"
+    ],
+    "must_pass_tests": true,
+    "forbidden_files": [
+      "order_service/order_manager.py"
+    ],
+    "expected_outcome": "A warning should be logged when reservation fails, while the existing response behavior remains unchanged."
+  },
+  {
+    "id": "understand_reserve_stock",
+    "task": "Explain what StockManager.reserve_stock does.",
+    "expected_files": [
+      "inventory_service/stock_manager.py"
+    ],
+    "expected_symbols": [
+      "StockManager",
+      "reserve_stock"
+    ],
+    "must_pass_tests": false,
+    "forbidden_files": [],
+    "expected_outcome": "The answer should explain validation, stock sufficiency checking, available stock reduction, reserved stock increase, and insufficient-stock failure behavior."
+  }
+]

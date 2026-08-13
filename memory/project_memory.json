@@ -15,6 +15,14 @@
     {
       "key": "order_cancellation_retry_logic",
       "value": "The project uses a convention of not marking orders as canceled unless all associated stock release operations succeed, allowing for potential retries in failure scenarios."
+    },
+    {
+      "key": "stock_reservation_failure_handling",
+      "value": "In the '_reserve_all_items' method of the OrderManager class, if a reservation fails, all prior successful reservations are rolled back by calling '_release_items', followed by raising a ValueError. This prevents a scenario where stock remains held for an order that will not be created."
+    },
+    {
+      "key": "rollback_comment_addition",
+      "value": "Added comments in `_reserve_all_items` for improved clarity on stock reservation failure handling."
     }
   ]
 }

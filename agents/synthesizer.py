@@ -1,25 +1,24 @@
+# Synthesizer for CodeAtlas.
+# Takes the completed workflow state and produces a final engineering recommendation.
+
 import json
 import os
 
 from dotenv import load_dotenv
 from openai import OpenAI
 
-
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_MODEL   = "gpt-4o-mini"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 def synthesize_result(state: dict) -> str:
-    """
-    Create one final conclusion from the complete workflow state.
-    """
-
-    task = state["task"]
-    plan = state["plan"]
+    """Creates one final conclusion from the complete workflow state."""
+    task         = state["task"]
+    plan         = state["plan"]
     step_results = state["step_results"]
 
     prompt = f"""
@@ -41,8 +40,7 @@ Explain:
 4. What dependencies or impact should be considered.
 5. Any uncertainty or missing information.
 
-Do not claim that code was modified.
-Do not invent facts that were not discovered.
+Do not claim that code was modified. Do not invent facts that were not discovered.
 """
 
     response = client.chat.completions.create(
@@ -52,14 +50,10 @@ Do not invent facts that were not discovered.
                 "role": "system",
                 "content": (
                     "You are the final analysis component of CodeAtlas. "
-                    "Synthesize workflow findings into a concise, grounded "
-                    "software engineering recommendation."
+                    "Synthesize workflow findings into a concise, grounded software engineering recommendation."
                 ),
             },
-            {
-                "role": "user",
-                "content": prompt,
-            },
+            {"role": "user", "content": prompt},
         ],
     )
 
