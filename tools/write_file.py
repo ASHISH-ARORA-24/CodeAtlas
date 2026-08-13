@@ -35,7 +35,13 @@ def write_file(
     """
 
     project_root = (PROJECTS_ROOT / project).resolve()
-    repo_root = (project_root / repo).resolve()
+    repo_root    = (project_root / repo).resolve()
+
+    # Strip repo prefix from file_path if the LLM accidentally includes it.
+    # e.g. file_path="inventory_service/stock_manager.py" → "stock_manager.py"
+    if file_path.startswith(repo + "/"):
+        file_path = file_path[len(repo) + 1:]
+
     requested_file = (repo_root / file_path).resolve()
 
     # ---------------------------------------------------------
