@@ -31,6 +31,11 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL   = "gpt-4o-mini"
 
+# Estimated model pricing per 1 million tokens
+OPENAI_INPUT_PRICE_PER_1M  = 0.15
+OPENAI_OUTPUT_PRICE_PER_1M = 0.60
+
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -203,6 +208,21 @@ def execute_tool(project: str, tool_name: str, arguments: dict):
 
 
 # ---------------------------------------------------------
+# EVENT TRACING
+# ---------------------------------------------------------
+
+def add_event(trace: dict, event_type: str, **details) -> None:
+    """
+    Adds one chronological observability event to the current agent trace.
+    """
+    trace["events"].append({
+        "type": event_type,
+        "timestamp": time.time(),
+        **details,
+    })
+
+
+# ---------------------------------------------------------
 # 3. AGENT LOOP
 # ---------------------------------------------------------
 
@@ -216,8 +236,16 @@ def run_agent(project: str, question: str, verbose: bool = False, return_trace: 
     """
     start_time = time.perf_counter()
 
-    trace = {"tools_called": [], "files_read": [], "files_written": [], "test_results": []}
+    trace = {"tools_called": [], "files_read": [], "files_written": [], "test_results": [], "events": []}
     prompt_tokens = completion_tokens = total_tokens = 0
+    total_cost_usd = 0.0
+
+    add_event(
+        trace,
+        "agent_start",
+        project=project,
+        question=question,
+    )
 
     if verbose:
         print()
@@ -262,14 +290,36 @@ def run_agent(project: str, question: str, verbose: bool = False, return_trace: 
 
     # Agent loop
     while True:
+        add_event(trace, "llm_call_start")
+        llm_start = time.perf_counter()
         response = client.chat.completions.create(
             model=OPENAI_MODEL, messages=messages, tools=TOOLS, tool_choice="auto",
         )
+        llm_duration = time.perf_counter() - llm_start
 
-        if response.usage:
-            prompt_tokens     += response.usage.prompt_tokens or 0
-            completion_tokens += response.usage.completion_tokens or 0
-            total_tokens      += response.usage.total_tokens or 0
+        call_prompt_tokens     = response.usage.prompt_tokens if response.usage else 0
+        call_completion_tokens = response.usage.completion_tokens if response.usage else 0
+        call_total_tokens      = response.usage.total_tokens if response.usage else 0
+
+        input_cost  = (call_prompt_tokens / 1_000_000) * OPENAI_INPUT_PRICE_PER_1M
+        output_cost = (call_completion_tokens / 1_000_000) * OPENAI_OUTPUT_PRICE_PER_1M
+        llm_cost    = input_cost + output_cost
+
+        total_cost_usd += llm_cost
+
+        add_event(
+            trace,
+            "llm_call_end",
+            duration_ms=round(llm_duration * 1000, 2),
+            prompt_tokens=call_prompt_tokens,
+            completion_tokens=call_completion_tokens,
+            total_tokens=call_total_tokens,
+            estimated_cost_usd=round(llm_cost, 8),
+        )
+
+        prompt_tokens     += call_prompt_tokens
+        completion_tokens += call_completion_tokens
+        total_tokens      += call_total_tokens
 
         message = response.choices[0].message
         messages.append(message)
@@ -278,12 +328,20 @@ def run_agent(project: str, question: str, verbose: bool = False, return_trace: 
         if not message.tool_calls:
             latency = round(time.perf_counter() - start_time, 3)
 
+            add_event(
+                trace,
+                "agent_end",
+                latency_seconds=latency,
+            )
+
             execution_result = {
+                "task": question,
                 "final_answer":    message.content,
                 "tools_called":    trace["tools_called"],
                 "files_read":      trace["files_read"],
                 "files_written":   trace["files_written"],
                 "test_results":    trace["test_results"],
+                "events":          trace["events"],
                 "tool_call_count": len(trace["tools_called"]),
                 "latency_seconds": latency,
                 "token_usage": {
@@ -291,6 +349,7 @@ def run_agent(project: str, question: str, verbose: bool = False, return_trace: 
                     "completion_tokens": completion_tokens,
                     "total_tokens":      total_tokens,
                 },
+                "estimated_cost_usd": round(total_cost_usd, 8),
             }
 
             if verbose:
@@ -321,6 +380,12 @@ def run_agent(project: str, question: str, verbose: bool = False, return_trace: 
 
             tool_trace = {"tool": tool_name, "arguments": trace_arguments}
             trace["tools_called"].append(tool_trace)
+
+            add_event(
+                trace,
+                "tool_call_start",
+                tool=tool_name,
+            )
 
             if verbose:
                 print()
@@ -358,6 +423,13 @@ def run_agent(project: str, question: str, verbose: bool = False, return_trace: 
                     tool_result = {"error": str(exc)}
 
             tool_trace["success"] = "error" not in tool_result
+
+            add_event(
+                trace,
+                "tool_call_end",
+                tool=tool_name,
+                success=tool_trace["success"],
+            )
 
             # Capture trace details
             if tool_name == "read_file" and "error" not in tool_result:
